@@ -454,6 +454,8 @@ static void unvme_cleanup(unvme_session_t* ses)
  */
 unvme_ns_t* unvme_do_open(int pci, int nsid, int qcount, int qsize)
 {
+    unvme_ns_t* xns = NULL;
+
     unvme_lockw(&unvme_lock);
     if (!unvme_ses) {
         if (log_open(unvme_log, "w")) {
@@ -468,11 +470,11 @@ unvme_ns_t* unvme_do_open(int pci, int nsid, int qcount, int qsize)
         if (xses->ns.pci == pci) {
             if (nsid > xses->ns.nscount) {
                 ERROR("invalid %06x nsid %d (max %d)", pci, nsid, xses->ns.nscount);
-                return NULL;
+                goto unlock;
             }
             if (xses->ns.id == nsid) {
                 ERROR("%06x nsid %d is in use", pci);
-                return NULL;
+                goto unlock;
             }
             break;
         }
@@ -497,7 +499,12 @@ unvme_ns_t* unvme_do_open(int pci, int nsid, int qcount, int qsize)
         nvme_identify_ctlr_t* idc = (nvme_identify_ctlr_t*)dma->buf;
         if (nsid > idc->nn) {
             ERROR("invalid %06x nsid %d (max %d)", pci, nsid, idc->nn);
-            return NULL;
+            unvme_adminq_delete(dev);
+            nvme_delete(&dev->nvmedev);
+            vfio_delete(&dev->vfiodev);
+            vfio_dma_free(dma);
+            free(dev);
+            goto unlock;
         }
 
         unvme_ns_t* ns = &dev->ns;
@@ -553,8 +560,11 @@ unvme_ns_t* unvme_do_open(int pci, int nsid, int qcount, int qsize)
     LIST_ADD(unvme_ses, ses);
 
     INFO_FN("%s (%.40s) is ready", ses->ns.device, ses->ns.mn);
+    xns = &ses->ns;
+
+unlock:
     unvme_unlockw(&unvme_lock);
-    return &ses->ns;
+    return xns;
 }
 
 /**
